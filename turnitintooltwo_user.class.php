@@ -20,6 +20,7 @@ class turnitintooltwo_user {
     private $role;
     public $firstname;
     public $lastname;
+    public $fullname;
     public $email;
     public $username;
     public $user_agreement_accepted;
@@ -37,12 +38,15 @@ class turnitintooltwo_user {
 
         $this->firstname = "";
         $this->lastname = "";
+        $this->fullname = "";
         $this->email = "";
         $this->username = "";
 
-        if ($id != 0 && $finduser === true) {
+        if ($id != 0) {
             $this->get_moodle_user($this->id);
-            $this->get_tii_user_id();
+            if ($finduser === true) {
+                $this->get_tii_user_id();
+            }
         }
     }
 
@@ -90,6 +94,14 @@ class turnitintooltwo_user {
 
         $this->firstname = stripslashes(str_replace('/', '', $user->firstname));
         $this->lastname = stripslashes(str_replace('/', '', $user->lastname));
+        $this->fullname = fullname($user);
+
+        // Set a default for first and last name in the event they are empty.
+        $firstname = trim($this->firstname);
+        $this->firstname = (empty($firstname)) ? "Moodle" : $firstname;
+        $lastname = trim($this->lastname);
+        $this->lastname = (empty($lastname)) ? "User ".$this->id : $lastname;
+
         $this->email = trim(html_entity_decode($user->email));
         $this->username = $user->username;
 
@@ -115,18 +127,19 @@ class turnitintooltwo_user {
     /**
      * Convert a regular firstname into the pseudo equivelant for student data privacy purpose
      *
-     * @return string A psuedo firstname address
+     * @return string A pseudo firstname address
      */
     private function get_pseudo_firstname() {
         $config = turnitintooltwo_admin_config();
-        return $config->pseudofirstname;
+
+        return !empty( $config->pseudofirstname ) ? $config->pseudofirstname : TURNITINTOOLTWO_DEFAULT_PSEUDO_FIRSTNAME;
     }
 
     /**
      * Convert a regular lastname into the pseudo equivelant for student data privacy purpose
      *
      * @param string $email The users email address
-     * @return string A psuedo lastname address
+     * @return string A pseudo lastname address
      */
     private function get_pseudo_lastname() {
         global $DB;
@@ -232,7 +245,7 @@ class turnitintooltwo_user {
         $turnitincomms = new turnitintooltwo_comms();
         $turnitincall = $turnitincomms->initialise_api();
 
-        // Convert the email, firstname and lastname to psuedos for students if the option is set in config
+        // Convert the email, firstname and lastname to pseudos for students if the option is set in config
         // Unless the user is already logged as a tutor then use real details.
         if (!empty($config->enablepseudo) && $this->role == "Learner") {
             $user = new TiiPseudoUser($this->get_pseudo_domain());
@@ -286,7 +299,6 @@ class turnitintooltwo_user {
 
             try {
                 $turnitincall->updateUser($user);
-                turnitintooltwo_activitylog("Turnitin User updated: ".$this->id." (".$this->tii_user_id.")", "REQUEST");
             } catch (Exception $e) {
                 $toscreen = ($this->workflowcontext == "cron") ? false : true;
                 $turnitincomms->handle_exceptions($e, 'userupdateerror', $toscreen);
@@ -306,7 +318,14 @@ class turnitintooltwo_user {
         $tiiuser = new stdClass();
         $tiiuser->id = $tiidbid;
         $tiiuser->turnitin_uid = 0;
-        $DB->update_record('turnitintooltwo_users', $tiiuser);
+
+        // Check if the deleted flag has been set. if yes delete the TII record rather than updating it.
+        if ($DB->get_record("user", array('id' => $this->id, 'deleted' => 1), "deleted")) {
+            $DB->delete_records('turnitintooltwo_users', array('userid' => $this->id));
+        }
+        else {
+            $DB->update_record('turnitintooltwo_users', $tiiuser);
+        }
 
         turnitintooltwo_activitylog("User unlinked: ".$this->id." (".$tiidbid.") ", "REQUEST");
     }
@@ -353,6 +372,14 @@ class turnitintooltwo_user {
     public function join_user_to_class($tiicourseid) {
 
         $turnitincomms = new turnitintooltwo_comms();
+
+        // We only want an API log entry for this if diagnostic mode is set to Debugging
+        if (empty($config)) {
+            $config = turnitintooltwo_admin_config();
+        }
+        if ($config->enablediagnostic != 2) {
+            $turnitincomms->setDiagnostic(0);
+        }
         $turnitincall = $turnitincomms->initialise_api();
 
         $membership = new TiiMembership();
@@ -524,7 +551,7 @@ class turnitintooltwo_user {
         global $DB;
 
         // Array of settings that we want to save.
-        $settingstosave = array("type", "numparts", "portfolio", "maxfilesize", "grade", "anon", "studentreports",
+        $settingstosave = array("type", "numparts", "portfolio", "maxfilesize", "grade", "anon", "studentreports", "gradedisplay",
                                 "maxmarks1", "maxmarks2", "maxmarks3", "maxmarks4", "maxmarks5", "allowlate", "reportgenspeed",
                                 "submitpapersto", "spapercheck", "internetcheck", "journalcheck", "excludebiblio",
                                 "excludequoted", "excludevalue", "excludetype", "erater", "erater_handbook",
